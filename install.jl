@@ -20,4 +20,5 @@ Pkg.add("ProgressMeter")
 Pkg.add("IJulia")
 Pkg.add("Flux")
 Pkg.add("CUDA")
-
+Pkg.add("MLDataUtils")
+Pkg.add("Debugger")
