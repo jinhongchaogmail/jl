@@ -1,0 +1,57 @@
+在 Julia 中，你可以使用 Debugger.jl 包来逐步执行一个函数。以下是如何安装和使用 Debugger.jl 的步骤：
+
+首先，你需要安装 Debugger.jl。你可以在 Julia REPL 中输入以下命令来安装：
+using PkgPkg.add("Debugger")
+￼
+然后，你可以使用 @enter 宏来开始逐步执行一个函数。例如，如果你想逐步执行 train! 函数，你可以这样做：
+using Debugger@enter train!(loss, ps, data, opt)
+￼
+在调试器中，你可以使用以下命令来控制执行流程：
+
+n：执行下一行代码
+s：步入函数
+finish：完成当前函数
+bt：显示回溯（backtrace）
+q：退出调试器
+请注意，Debugger.jl 可能会使你的代码运行得更慢，因为它需要收集额外的信息来支持调试功能。因此，你应该只在需要调试时使用它，而不是在正常运行代码时使用它。
+在 Julia 中，除了使用 `@enter` 进行调试外，还有其他一些调试技术：
+
+1. **使用 `@debug`，`@info`，`@warn` 和 `@error` 日志宏**：这些宏可以帮助你在代码中添加日志消息，这对于理解代码的行为和诊断问题非常有用。
+
+```julia
+@info "This is an info log message"
+@debug "This is a debug log message"
+```
+
+2. **使用断点**：你可以使用 `@bp` 宏在代码中设置断点。当代码运行到断点时，它会自动停止，然后你可以检查当前的变量值和执行堆栈。
+
+```julia
+function foo()
+    x = 1
+    @bp
+    x = 2
+end
+```
+
+3. **使用 `@assert` 宏**：`@assert` 宏可以帮助你检查代码的假设。如果假设不成立，`@assert` 会抛出一个错误。
+
+```julia
+x = 1
+@assert x == 2
+```
+
+4. **使用 `@test` 宏**：`@test` 宏用于编写单元测试，这是一种检查代码是否正确工作的有效方法。
+
+```julia
+using Test
+@test 1 + 1 == 2
+```
+
+5. **使用 `@which` 和 `@edit` 宏**：这些宏可以帮助你查看和编辑函数的源代码。
+
+```julia
+@which 1 + 1
+@edit 1 + 1
+```
+
+以上就是一些在 Julia 中进行调试的方法。请注意，有效的调试通常需要结合使用多种方法。
