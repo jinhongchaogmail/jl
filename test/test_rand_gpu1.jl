@@ -1,6 +1,5 @@
 
-using StatsBase,Plots,Flux,MLDataUtils,CUDA
-using Debugger
+using StatsBase,Plots,Flux,MLDataUtils
 
 bsz=10
 yangben=1000
