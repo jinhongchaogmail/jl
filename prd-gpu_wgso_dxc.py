@@ -113,37 +113,31 @@ best_batch_size=None
 best_feature=None
 best_w_size=None
 best_score = float('inf')
+import multiprocessing as mp
+from multiprocessing import Pool
+# 设置全局启动方法为'spawn'
+mp.set_start_method('spawn', force=True)
+def process_params(params):
+    feature, w_size, batch_size, line, num_layer = params
+    X_train, X_val, y_train, y_val = prep_data(feature, w_size)
+    train_data = DataLoader(list(zip(X_train, y_train)), batch_size=batch_size, shuffle=True)
+    val_data = DataLoader(list(zip(X_val, y_val)), batch_size=batch_size)
+    model = MyModel(line, num_layer).to(device)
+    score = train_and_validate(model, train_data, val_data)
+    return score, line, num_layer, batch_size, feature, w_size
 
+if __name__ == '__main__':
+    params = [(feature, w_size, batch_size, line, num_layer) 
+              for feature in features
+              for w_size in w_sizes
+              for batch_size in batch_sizes
+              for line in lines
+              for num_layer in num_layers]
 
-# 在你的循环外部，打开文件并创建一个csv writer
-with open('output.csv', 'a', newline='') as f:
-    writer = csv.writer(f)
-    # 写入标签行
-    writer.writerow(['Best Line', 'Best Num Layers', 'Best Score', 'Best Batch Size', 'Best Feature', 'Best Window Size'])
+    with Pool(processes=4) as p:
+        results = p.map(process_params, params)
 
-    # 穷举所有参数组合  
-    for feature in features:
-        for w_size in w_sizes:
-            X_train, X_val, y_train, y_val = prep_data(feature, w_size)
-            for batch_size in batch_sizes:
-                # 创建DataLoader
-                train_data = DataLoader(list(zip(X_train, y_train)), batch_size=batch_size, shuffle=True)
-                val_data = DataLoader(list(zip(X_val, y_val)), batch_size=batch_size)
-                # 穷举所有参数组合
-                for line in lines:
-                    for num_layer in num_layers:
-                        print(f"line: {line}, num_layers: {num_layer}, batch_size: {batch_size}, feature: {feature}, w_size: {w_size}")
-                        # 2. 创建模型实例
-                        model = MyModel(line, num_layer).to(device)
-                        score = train_and_validate(model, train_data, val_data)
-                        # 如果这个分数比之前的分数好，就更新最佳参数和最佳分数
-                        if score < best_score:
-                            best_line = line
-                            best_num_layers = num_layer
-                            best_score = score
-                            best_batch_size=batch_size
-                            best_feature=feature
-                            best_w_size=w_size
-                            print(f"Best line: {best_line},\n best num_layers: {best_num_layers},\n best score: {best_score},\n best batch_size:{best_batch_size},\n best feature:{best_feature},\n best w_size:{best_w_size}")
-                            # 将数据写入CSV文件
-                            writer.writerow([best_line, best_num_layers, best_score, best_batch_size, best_feature, best_w_size])
+    # 找到最佳分数和对应的参数
+    best_score, best_line, best_num_layers, best_batch_size, best_feature, best_w_size = min(results)
+
+    print(f"Best line: {best_line},\n best num_layers: {best_num_layers},\n best score: {best_score},\n best batch_size:{best_batch_size},\n best feature:{best_feature},\n best w_size:{best_w_size}")

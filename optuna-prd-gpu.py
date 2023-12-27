@@ -1,3 +1,10 @@
+# Date: 2021-08-31
+#这个代码是用来跑optuna的，用来找最优参数的。如果在谷歌云盘上跑，需要先挂载云盘，然后把DB.h5和example.db放到云盘上，然后把下面的注释去掉。
+"""#谷歌云盘时，需要先挂载云盘
+!pip install optuna
+!cp "/content/drive/MyDrive/DB.h5" .
+!cp "/content/drive/MyDrive/example.db" .
+"""
 import torch
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
@@ -5,10 +12,23 @@ from sklearn.model_selection import train_test_split
 import numpy as np
 import h5py
 import csv 
+import optuna
+from joblib import Parallel, delayed
+import time
+import shutil
 # 检查是否有可用的GPU
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+#device= 'cpu'
 print(device)
 torch.cuda.empty_cache()
+def backup_db():
+    while True:
+        # 复制文件到Google Drive
+        shutil.copy2('example.db', '/content/drive/MyDrive/example.db')
+        
+        # 暂停一小时
+        time.sleep(60)
 def prep_data(feature=9.5, w_size=10):
     f = h5py.File("DB.h5", "r")
     ks = list(f.keys())
@@ -54,14 +74,16 @@ def find_features(arr, feature, w_size):
     while i < len(arr[5, :]):
         if arr[5, i] > feature:
             indices.append(i)
-            i += w_size  # 跳过w_size个数据
+            i += w_size//3  # 跳过w_size个数据
         else:
             i += 1
     return indices
 def train_and_validate(model, train_data, val_data):
     # 定义损失函数和优化器
     loss_fn = nn.MSELoss()
-    optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+    # 定义学习率调度器
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
 
     # 训练模型
     for epoch in range(100):
@@ -77,7 +99,8 @@ def train_and_validate(model, train_data, val_data):
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-
+        # 更新学习率
+        scheduler.step()
     # 验证模型
     val_loss = 0
     with torch.no_grad():
@@ -100,50 +123,48 @@ class MyModel(nn.Module):
         out = self.linear(out)
         return out.squeeze(1)
 
-# 定义参数范围
-lines = [6,8,12]
-num_layers = [2, 3, 4]
-batch_sizes=[1,2,3]
-features=[9.6,9.8]
-w_sizes=[60,70,80,90,100,110,120]
-# 记录最佳参数和最佳分数
-best_line = None
-best_num_layers = None
-best_batch_size=None
-best_feature=None
-best_w_size=None
-best_score = float('inf')
+# 创建一个新的线程来运行备份操作默认备份到Google Drive
+#backup_thread = threading.Thread(target=backup_db)
+# 启动备份线程
+#backup_thread.start()
 
+# 定义优化的目标函数
+def objective(trial):
+    line = trial.suggest_int('line', 2, 16)
+    num_layer = trial.suggest_int('num_layer', 2, 5)
+    batch_size = trial.suggest_int('batch_size', 1, 512)
+    feature = 9# trial.suggest_float('feature', 9,10)
+    w_size = trial.suggest_int('w_size', 6, 31)
 
-# 在你的循环外部，打开文件并创建一个csv writer
-with open('output.csv', 'a', newline='') as f:
-    writer = csv.writer(f)
-    # 写入标签行
-    writer.writerow(['Best Line', 'Best Num Layers', 'Best Score', 'Best Batch Size', 'Best Feature', 'Best Window Size'])
+    X_train, X_val, y_train, y_val = prep_data(feature, w_size)
+    train_data = DataLoader(list(zip(X_train, y_train)), batch_size=batch_size, shuffle=True)
+    val_data = DataLoader(list(zip(X_val, y_val)), batch_size=batch_size)
+    
+    model = MyModel(line, num_layer).to(device)
 
-    # 穷举所有参数组合  
-    for feature in features:
-        for w_size in w_sizes:
-            X_train, X_val, y_train, y_val = prep_data(feature, w_size)
-            for batch_size in batch_sizes:
-                # 创建DataLoader
-                train_data = DataLoader(list(zip(X_train, y_train)), batch_size=batch_size, shuffle=True)
-                val_data = DataLoader(list(zip(X_val, y_val)), batch_size=batch_size)
-                # 穷举所有参数组合
-                for line in lines:
-                    for num_layer in num_layers:
-                        print(f"line: {line}, num_layers: {num_layer}, batch_size: {batch_size}, feature: {feature}, w_size: {w_size}")
-                        # 2. 创建模型实例
-                        model = MyModel(line, num_layer).to(device)
-                        score = train_and_validate(model, train_data, val_data)
-                        # 如果这个分数比之前的分数好，就更新最佳参数和最佳分数
-                        if score < best_score:
-                            best_line = line
-                            best_num_layers = num_layer
-                            best_score = score
-                            best_batch_size=batch_size
-                            best_feature=feature
-                            best_w_size=w_size
-                            print(f"Best line: {best_line},\n best num_layers: {best_num_layers},\n best score: {best_score},\n best batch_size:{best_batch_size},\n best feature:{best_feature},\n best w_size:{best_w_size}")
-                            # 将数据写入CSV文件
-                            writer.writerow([best_line, best_num_layers, best_score, best_batch_size, best_feature, best_w_size])
+    start_time = time.time()
+    score = train_and_validate(model, train_data, val_data)
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    print(f"\033[31mElapsed time: {elapsed_time} seconds\033[0m")
+    #print(f"score:{score},line: {line}, num_layers: {num_layer}, batch_size: {batch_size}, feature: {feature}, w_size: {w_size}")               
+    return score            
+
+def optimize(n_trials):
+    # 使用optuna来优化超参数
+    #study = optuna.create_study(direction='minimize')
+    # 创建一个新的、持久化的 study
+    study = optuna.create_study(study_name='my_study', storage='sqlite:///example.db', load_if_exists=True, direction='minimize')
+    study.optimize(objective, n_trials=n_trials)
+    return study.best_params, study.best_value
+
+# 使用joblib来并行运行多个试验
+n_jobs = 5  # 你想要使用的进程数
+results = Parallel(n_jobs=n_jobs)(
+    delayed(optimize)(n_trials=500//n_jobs) for _ in range(n_jobs)
+)
+
+# 打印每个进程的最佳参数和最佳分数
+for i, (best_params, best_value) in enumerate(results):
+    print(f"Process {i}: Best parameters: {best_params}")
+    print(f"Process {i}: Best score: {best_value}")
