@@ -30,8 +30,9 @@ using Base.Threads
         for j in 1:size(arr, 2)-w_size+1
             data_x[:,:,j] = arr[ :,j:j+w_size-1] |> Matrix{Float32}
         end
+        #0trade_date,2open,3high,4low,5close,6change,7pct_chg,8volume,9amount
         train_x=data_x[:,1:end-1,:]
-        train_y=data_x[4,end,:]
+        train_y=data_x[5,end,:]
         train_y=reshape(train_y,1,1,size(train_x,3))    
 
         return   splitobs(shuffleobs((train_x, train_y)), at = 0.8)
@@ -46,7 +47,7 @@ f = jldopen("DB.jld2", "r")
 w_size = 13
 for i in 1:30#eachindex(ks)[1:end-1]        
     #trade_date,open,high,low,close,change,pct_chg,volume,amount
-    (train_set, val_set) = prep_data(f[ks[i]], w_size, [2, 3, 4, 5, 7, 8])
+    (train_set, val_set) = prep_data(f[ks[i]], w_size, [2, 3, 4, 5,6, 7, 8])
 
 
     #定义模型
@@ -56,7 +57,7 @@ for i in 1:30#eachindex(ks)[1:end-1]
         epochs = 100
         m = 14
         model = Chain(
-            LSTM(6, m),
+            LSTM(7, m),
             Dense(m, 1),
             last)
         # 定义损失函数和优化器
