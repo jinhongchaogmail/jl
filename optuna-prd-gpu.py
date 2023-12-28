@@ -5,6 +5,7 @@
 !cp "/content/drive/MyDrive/DB.h5" .
 !cp "/content/drive/MyDrive/example.db" .
 """
+#region Imports
 import torch
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
@@ -16,6 +17,7 @@ import optuna
 from joblib import Parallel, delayed
 import time
 import shutil
+#endregion
 # 检查是否有可用的GPU
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -29,37 +31,32 @@ def backup_db():
         
         # 暂停一小时
         time.sleep(60)
-def prep_data(feature=9.5, w_size=10):
-    f = h5py.File("DB.h5", "r")
-    ks = list(f.keys())
-    X = []
-    Y = []
-    for i in range(1000):  # replace with range(len(ks)) to process all keys
-        arr = np.array(f[ks[i]])
-        # Reverse the array and select columns 2 to 9
-        arr = arr.astype(np.float32)
-        # Find indices where the 6th row is greater than feature
-        indices = find_features(arr, feature, w_size)
-        # Calculate mean and standard deviation
-        mu = np.mean(arr, axis=1, keepdims=True)
-        std_dev = np.std(arr, axis=1, keepdims=True)
-        # Normalize the array
-        arr = (arr - mu) / std_dev
-        for i in indices:
-            if i > w_size:
-                d = arr[:, i-w_size:i]
-                x = d[:, :-1]
-                y = d[5, -1]#.reshape(-1, 1)
-                X.append(x.T)
-                Y.append(y.T)
-  
-    # Convert list of arrays to 3D array
-    X3 = np.stack(X, axis=0)
-    Y3 = np.stack(Y, axis=0)
-    f.close()
-    # Split and shuffle the data
-    X_train, X_test, Y_train, Y_test = train_test_split(X3, Y3, test_size=0.2, random_state=42)
-    return X_train, X_test, Y_train, Y_test
+def prep_data(feature=9.5, w_size=10,n=1):
+    with h5py.File("DB.h5", "r") as f:
+        # 处理文件的代码
+        ks = list(f.keys())
+        X = []
+        Y = []
+        batch=len(ks)//3
+        start=(n-1)*batch
+        end=n*batch
+        for i in range(start, min(end, len(ks))):  # replace with range(len(ks)) to process all keys
+            arr = np.array(f[ks[i]])
+            # Reverse the array and select columns 2 to 9
+            arr = arr.astype(np.float32)
+            # Find indices where the 6th row is greater than feature
+            indices = find_features(arr, feature, w_size)
+            # Calculate mean and standard deviation
+            mu = np.mean(arr, axis=1, keepdims=True)
+            std_dev = np.std(arr, axis=1, keepdims=True)
+            # Normalize the array
+            arr = (arr - mu) / std_dev
+            for i in indices:
+                if i > w_size:
+                    d = arr[:, i-w_size:i]
+                    x = d[:, :-1]
+                    y = d[5, -1]#.reshape(-1, 1)
+                    yield x.T, y.T
 def find_features(arr, feature, w_size):
     """
     从DB.jld2上按特征提取训练数据。默认上涨4个点之前10日数据。
@@ -135,21 +132,59 @@ def objective(trial):
     batch_size = trial.suggest_int('batch_size', 1, 512)
     feature = 9# trial.suggest_float('feature', 9,10)
     w_size = trial.suggest_int('w_size', 6, 31)
-
-    X_train, X_val, y_train, y_val = prep_data(feature, w_size)
-    train_data = DataLoader(list(zip(X_train, y_train)), batch_size=batch_size, shuffle=True)
-    val_data = DataLoader(list(zip(X_val, y_val)), batch_size=batch_size)
+   
+    data = list(prep_data(feature, w_size, 1))
+    X3 = np.stack([x for x, _ in data], axis=0)
+    Y3 = np.stack([y for _, y in data], axis=0)
+    X_train, X_val, y_train, y_val = train_test_split(X3, Y3, test_size=0.2, random_state=42)
     
+    train_data = DataLoader(list(zip(X_train, y_train)), batch_size=batch_size, shuffle=True)
+    val_data = DataLoader(list(zip(X_val, y_val)), batch_size=batch_size)    
     model = MyModel(line, num_layer).to(device)
-
     start_time = time.time()
     score = train_and_validate(model, train_data, val_data)
     end_time = time.time()
+           
+    if score < 0.8:  # 如果loss低于阈值，进行1次验证
+        print(f"正在进行第二次验证，score:{score},line: {line}, num_layers: {num_layer}, batch_size: {batch_size}, feature: {feature}, w_size: {w_size}")  
+        data = list(prep_data(feature, w_size, 2))
+        X3 = np.stack([x for x, _ in data], axis=0)
+        Y3 = np.stack([y for _, y in data], axis=0)
+        X_train, X_val, y_train, y_val = train_test_split(X3, Y3, test_size=0.2, random_state=42)
+        
+        train_data = DataLoader(list(zip(X_train, y_train)), batch_size=batch_size, shuffle=True)
+        val_data = DataLoader(list(zip(X_val, y_val)), batch_size=batch_size)
+        #这里是多次验证的数据获取
+        total_score = 0
+        n_validations = 5  # 验证次数
+        for _ in range(n_validations):
+            score = train_and_validate(model, train_data, val_data)
+            total_score += score
+        # 计算平均分数
+        score = total_score / n_validations
+
+        if score < 0.75:  # 如果loss低于阈值，进行2次验证
+            print(f"正在进行第三次验证，score:{score},line: {line}, num_layers: {num_layer}, batch_size: {batch_size}, feature: {feature}, w_size: {w_size}")   
+            data = list(prep_data(feature, w_size, 3))
+            X3 = np.stack([x for x, _ in data], axis=0)
+            Y3 = np.stack([y for _, y in data], axis=0)
+            X_train, X_val, y_train, y_val = train_test_split(X3, Y3, test_size=0.2, random_state=42)
+            
+            train_data = DataLoader(list(zip(X_train, y_train)), batch_size=batch_size, shuffle=True)
+            val_data = DataLoader(list(zip(X_val, y_val)), batch_size=batch_size)
+            #这里是多次验证的数据获取
+            total_score = 0
+            n_validations = 5  # 验证次数
+            for _ in range(n_validations):
+                score = train_and_validate(model, train_data, val_data)
+                total_score += score
+            # 计算平均分数
+            score = total_score / n_validations
+
     elapsed_time = end_time - start_time
     print(f"\033[31mElapsed time: {elapsed_time} seconds\033[0m")
     #print(f"score:{score},line: {line}, num_layers: {num_layer}, batch_size: {batch_size}, feature: {feature}, w_size: {w_size}")               
     return score            
-
 def optimize(n_trials):
     # 使用optuna来优化超参数
     #study = optuna.create_study(direction='minimize')
@@ -159,11 +194,10 @@ def optimize(n_trials):
     return study.best_params, study.best_value
 
 # 使用joblib来并行运行多个试验
-n_jobs = 5  # 你想要使用的进程数
-results = Parallel(n_jobs=n_jobs)(
+n_jobs = 4  # 你想要使用的进程数
+results = Parallel(n_jobs=n_jobs, timeout=600)(
     delayed(optimize)(n_trials=500//n_jobs) for _ in range(n_jobs)
 )
-
 # 打印每个进程的最佳参数和最佳分数
 for i, (best_params, best_value) in enumerate(results):
     print(f"Process {i}: Best parameters: {best_params}")
